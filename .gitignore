@@ -7,3 +7,4 @@ env/
 venv/
 /build/
 textcompressor.spec
+text-compressed-project.txt
