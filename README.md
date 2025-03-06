@@ -4,3 +4,5 @@ The file contains also an explanation about how the file can be read and this is
 This can help to work with AI at the development of a full source code project.
 
 This tool can however be used whenever is useful to transfer a folder by translating it to a text file.
+
+A windows OS executable binary can be found in the dist folder.
