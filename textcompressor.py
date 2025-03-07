@@ -3,6 +3,10 @@ import os
 import sys
 import base64
 import configparser
+import math
+
+# Costante per il numero massimo di righe per file
+MAX_LINES_PER_FILE = 4000
 
 # Sezione introduttiva per l'archivio (da inserire all'inizio del file compresso)
 INTRODUCTION = """=== INTRODUZIONE ===
@@ -44,8 +48,8 @@ def get_base_path():
 def should_include_file(filename, white_list, black_list):
     """
     Determina se includere un file in base alle liste di filtro.
-    Se la white list è non vuota, viene incluso solo se l'estensione del file (in minuscolo) è presente.
-    Se invece la white list è vuota ma è presente una black list, viene escluso se l'estensione è presente nella black list.
+    Se la white list è non vuota, viene incluso solo se l'estensione (in minuscolo) è presente.
+    Se invece la white list è vuota ma è presente una black list, viene escluso se l'estensione è presente.
     Altrimenti, il file viene incluso.
     """
     ext = os.path.splitext(filename)[1].lower()  # include il punto, es: ".py"
@@ -57,75 +61,113 @@ def should_include_file(filename, white_list, black_list):
             return False
     return True
 
+def write_lines_to_files(output_file, lines):
+    """
+    Scrive l'elenco di righe in uno o più file.
+    Se il numero totale di righe è inferiore o uguale a MAX_LINES_PER_FILE, scrive in output_file.
+    Altrimenti, divide in parti:
+      ad esempio, se output_file è "text-compressed-project.txt",
+      vengono generati "text-compressed-project_part1.txt", "text-compressed-project_part2.txt", etc.
+    """
+    total_lines = len(lines)
+    if total_lines <= MAX_LINES_PER_FILE:
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write("".join(lines))
+        print(f"Compressione completata. Archivio salvato in: {output_file}")
+    else:
+        parts = math.ceil(total_lines / MAX_LINES_PER_FILE)
+        base, ext = os.path.splitext(output_file)
+        for part in range(parts):
+            part_filename = f"{base}_part{part+1}{ext}"
+            start = part * MAX_LINES_PER_FILE
+            end = start + MAX_LINES_PER_FILE
+            with open(part_filename, "w", encoding="utf-8") as f:
+                f.write("".join(lines[start:end]))
+            print(f"Parte {part+1} salvata in: {part_filename}")
+        print(f"Compressione completata. Totale parti generate: {parts}")
+
 def compress_project(input_dir, output_file, white_list=None, black_list=None):
     """
-    Scansiona ricorsivamente la directory di input e scrive il contenuto in un file di archivio.
-    Se il file di output esiste già, chiede conferma per la sovrascrittura.
-    Per ogni file si tenta la lettura in modalità testo (UTF-8); in caso di errore, si legge in modalità binaria,
-    si codifica in base64 e si usa un marker specifico.
-    Applica i filtri white list/black list, se forniti.
+    Scansiona ricorsivamente la directory di input e compone il contenuto in una lista di righe.
+    Applica i filtri white list/black list (se forniti).
+    In aggiunta, esclude intere cartelle il cui nome è presente nella black list.
+    Al termine, se il numero totale di righe supera MAX_LINES_PER_FILE, il risultato viene suddiviso su più file.
     """
     if white_list is None:
         white_list = []
     if black_list is None:
         black_list = []
 
-    if os.path.exists(output_file):
-        overwrite = input(f"Il file '{output_file}' esiste già. Vuoi sovrascriverlo? [y/N]: ")
-        if overwrite.lower() != 'y':
-            print("Operazione annullata.")
-            return
-
-    with open(output_file, "w", encoding="utf-8") as out:
-        # Scrive la sezione introduttiva
-        out.write(INTRODUCTION + "\n")
-        # Scrive il marker d'inizio archivio
-        out.write(MARKER_PROJECT_START + "\n")
+    output_lines = []
+    output_lines.append(INTRODUCTION + "\n")
+    output_lines.append(MARKER_PROJECT_START + "\n")
+    
+    for root, dirs, files in os.walk(input_dir):
+        # Esclude intere cartelle se il loro nome è presente nella black list (case-insensitive)
+        dirs[:] = [d for d in dirs if d.lower() not in [b.lower() for b in black_list]]
         
-        for root, dirs, files in os.walk(input_dir):
-            rel_dir = os.path.relpath(root, input_dir)
-            if rel_dir == ".":
-                rel_dir = ""
-            # Scrive il marker della directory
-            dir_marker = f"{MARKER_DIR_PREFIX} {rel_dir} >>>"
-            out.write(dir_marker + "\n")
-            
-            for file in files:
-                if not should_include_file(file, white_list, black_list):
-                    continue
-                file_path = os.path.join(root, file)
-                rel_file_path = os.path.join(rel_dir, file)
+        rel_dir = os.path.relpath(root, input_dir)
+        if rel_dir == ".":
+            rel_dir = ""
+        output_lines.append(f"{MARKER_DIR_PREFIX} {rel_dir} >>>\n")
+        
+        for file in files:
+            if not should_include_file(file, white_list, black_list):
+                continue
+            file_path = os.path.join(root, file)
+            rel_file_path = os.path.join(rel_dir, file)
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                output_lines.append(f"{MARKER_FILE_START_PREFIX} {rel_file_path} >>>\n")
+                output_lines.append(content + "\n")
+                output_lines.append(MARKER_FILE_END + "\n")
+            except Exception as e:
                 try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                    file_marker = f"{MARKER_FILE_START_PREFIX} {rel_file_path} >>>"
-                    out.write(file_marker + "\n")
-                    out.write(content + "\n")
-                    out.write(MARKER_FILE_END + "\n")
-                except Exception as e:
-                    try:
-                        with open(file_path, "rb") as f:
-                            binary_content = f.read()
-                        encoded = base64.b64encode(binary_content).decode('ascii')
-                        file_marker = f"{MARKER_FILE_BINARY_START_PREFIX} {rel_file_path} >>>"
-                        out.write(file_marker + "\n")
-                        out.write(encoded + "\n")
-                        out.write(MARKER_FILE_BINARY_END + "\n")
-                    except Exception as e2:
-                        print(f"Errore nella lettura del file {file_path} in modalità binaria: {e2}", file=sys.stderr)
-        out.write(MARKER_PROJECT_END + "\n")
-    print(f"Compressione completata. Archivio salvato in: {output_file}")
+                    with open(file_path, "rb") as f:
+                        binary_content = f.read()
+                    encoded = base64.b64encode(binary_content).decode('ascii')
+                    output_lines.append(f"{MARKER_FILE_BINARY_START_PREFIX} {rel_file_path} >>>\n")
+                    output_lines.append(encoded + "\n")
+                    output_lines.append(MARKER_FILE_BINARY_END + "\n")
+                except Exception as e2:
+                    print(f"Errore nella lettura del file {file_path} in modalità binaria: {e2}", file=sys.stderr)
+    output_lines.append(MARKER_PROJECT_END + "\n")
+    write_lines_to_files(output_file, output_lines)
+
+def combine_multipart_archive(input_file):
+    """
+    Se il file indicato non esiste, prova a combinare i file multipart (con suffisso _partN).
+    Restituisce una lista di righe risultante dalla combinazione, oppure None se non trova alcun file.
+    """
+    if os.path.exists(input_file):
+        with open(input_file, "r", encoding="utf-8") as f:
+            return f.readlines()
+    else:
+        base, ext = os.path.splitext(input_file)
+        part = 1
+        combined_lines = []
+        while True:
+            part_filename = f"{base}_part{part}{ext}"
+            if os.path.exists(part_filename):
+                with open(part_filename, "r", encoding="utf-8") as f:
+                    combined_lines.extend(f.readlines())
+                part += 1
+            else:
+                break
+        if combined_lines:
+            return combined_lines
+        else:
+            return None
 
 def decompress_project(input_file, output_dir):
     """
-    Legge il file di archivio e ricostruisce la struttura originale.
+    Legge il file di archivio (o i file multipart) e ricostruisce la struttura originale.
     Gestisce sia i file memorizzati in modalità testo sia quelli in modalità binaria (base64).
     """
-    try:
-        with open(input_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-    except Exception as e:
-        print(f"Errore nell'apertura del file di archivio: {e}", file=sys.stderr)
+    lines = combine_multipart_archive(input_file)
+    if lines is None:
+        print(f"File di archivio non trovato: {input_file}", file=sys.stderr)
         return
 
     start_index = 0
@@ -185,32 +227,47 @@ def decompress_project(input_file, output_dir):
 def create_default_config(config_file):
     """
     Crea un file di configurazione .ini di default con commenti ed esempi.
+    Il file verrà creato con il nome text-compressor-config.ini.
     """
     default_config = """; Configurazione per text-compressor
-; ---------------------------------------
-; Sezione Paths:
-; compress_folder: specifica il percorso della directory da comprimere.
+; ============================================
+; Questo file di configurazione (text-compressor-config.ini) consente di specificare i parametri per la compressione
+; e decompressione del progetto.
+;
+; [Paths]
+; compress_folder = 
+;    Specifica il percorso della directory da comprimere.
+;    Se lasciato vuoto, verrà utilizzata la directory corrente in cui si trova l'eseguibile.
+;
+; decompress_folder = 
+;    Specifica il percorso della directory dove decomprimere l'archivio.
 ;    Se lasciato vuoto, verrà utilizzata la directory corrente.
-; decompress_folder: specifica il percorso della directory dove decomprimere.
-;    Se lasciato vuoto, verrà utilizzata la directory corrente.
-; output_archive: specifica il percorso completo del file di output per la compressione.
-;    Se lasciato vuoto, verrà creato 'text-compressed-project.txt' nella directory di compressione.
-; input_archive: specifica il percorso completo del file di archivio da decomprimere.
-;    Se lasciato vuoto, verrà usato 'text-compressed-project.txt' nella directory di compressione.
-
+;
+; output_archive = 
+;    Specifica il percorso completo del file di output per la compressione.
+;    Se lasciato vuoto, verrà creato un file denominato "text-compressed-project.txt" nella directory di compressione.
+;
+; input_archive = 
+;    Specifica il percorso completo del file di archivio da decomprimere.
+;    Se lasciato vuoto, verrà usato "text-compressed-project.txt" nella directory di compressione.
+;
+; [Filters]
+; white_list = 
+;    Elenco delle estensioni da includere (se presente, solo questi file saranno compressi).
+;    Esempio: .py, .txt, .md
+;
+; black_list = 
+;    Elenco delle estensioni e/o nomi di cartelle da escludere.
+;    Esempio: .exe, .bin, .git
+;    Se un nome di cartella è presente in black_list, quella cartella verrà esclusa dalla compressione.
+;
+; Se entrambe le liste sono vuote, verranno compressi tutti i file.
+; ============================================
 [Paths]
 compress_folder =
 decompress_folder =
 output_archive =
 input_archive =
-
-; ---------------------------------------
-; Sezione Filters:
-; white_list: elenco delle estensioni da includere (se presente, solo questi file saranno compressi).
-;    Esempio: .py, .txt, .md
-; black_list: elenco delle estensioni da escludere.
-;    Esempio: .exe, .bin
-; Se entrambe le liste sono vuote, verranno presi tutti i file.
 
 [Filters]
 white_list =
@@ -223,11 +280,7 @@ black_list =
 def read_config(config_file):
     """
     Legge il file di configurazione in formato .ini e restituisce:
-      - compress_folder: directory da comprimere (default → cartella locale)
-      - decompress_folder: directory dove decomprimere (default → cartella locale)
-      - output_archive: percorso del file di output per compressione (default → 'text-compressed-project.txt' nella cartella di compressione)
-      - input_archive: percorso del file di archivio da decomprimere (default → 'text-compressed-project.txt' nella cartella di compressione)
-      - white_list e black_list: liste di filtro (se non presenti, liste vuote)
+    compress_folder, decompress_folder, output_archive, input_archive, white_list, black_list.
     """
     config = configparser.ConfigParser()
     config.read(config_file)
@@ -270,7 +323,7 @@ def main():
             output_file = default_output_archive
         white_list_str = input("Inserisci la white list (estensioni separate da virgola, default: vuota → tutti i file): ").strip()
         white_list = [x.strip() for x in white_list_str.split(',')] if white_list_str else []
-        black_list_str = input("Inserisci la black list (estensioni separate da virgola, default: vuota): ").strip()
+        black_list_str = input("Inserisci la black list (estensioni o nomi di cartelle separati da virgola, default: vuota): ").strip()
         black_list = [x.strip() for x in black_list_str.split(',')] if black_list_str else []
         
         print("Scegli l'operazione da eseguire:")
@@ -294,7 +347,7 @@ def main():
             print("Scelta non valida. Uscita.")
     
     elif mode_choice == "2":
-        default_config = os.path.join(base_path, "config.ini")
+        default_config = os.path.join(base_path, "text-compressor-config.ini")
         config_path = input(f"Inserisci il percorso del file di configurazione (default: {default_config}): ").strip()
         if config_path == "":
             config_path = default_config
