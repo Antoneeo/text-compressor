@@ -231,34 +231,34 @@ def create_default_config(config_file):
     """
     default_config = """; Configurazione per text-compressor
 ; ============================================
-; Questo file di configurazione (text-compressor-config.ini) consente di specificare i parametri per la compressione
-; e decompressione del progetto.
+; Questo file di configurazione (text-compressor-config.ini) consente di specificare i parametri per la
+; compressione e decompressione del progetto.
 ;
 ; [Paths]
-; compress_folder = 
+; compress_folder =
 ;    Specifica il percorso della directory da comprimere.
 ;    Se lasciato vuoto, verrà utilizzata la directory corrente in cui si trova l'eseguibile.
 ;
-; decompress_folder = 
+; decompress_folder =
 ;    Specifica il percorso della directory dove decomprimere l'archivio.
 ;    Se lasciato vuoto, verrà utilizzata la directory corrente.
 ;
-; output_archive = 
+; output_archive =
 ;    Specifica il percorso completo del file di output per la compressione.
 ;    Se lasciato vuoto, verrà creato un file denominato "text-compressed-project.txt" nella directory di compressione.
 ;
-; input_archive = 
+; input_archive =
 ;    Specifica il percorso completo del file di archivio da decomprimere.
 ;    Se lasciato vuoto, verrà usato "text-compressed-project.txt" nella directory di compressione.
 ;
 ; [Filters]
-; white_list = 
+; white_list =
 ;    Elenco delle estensioni da includere (se presente, solo questi file saranno compressi).
 ;    Esempio: .py, .txt, .md
 ;
-; black_list = 
+; black_list =
 ;    Elenco delle estensioni e/o nomi di cartelle da escludere.
-;    Esempio: .exe, .bin, .git
+;    Esempio: .git, .exe, .pyc, .dll, build
 ;    Se un nome di cartella è presente in black_list, quella cartella verrà esclusa dalla compressione.
 ;
 ; Se entrambe le liste sono vuote, verranno compressi tutti i file.
@@ -271,7 +271,7 @@ input_archive =
 
 [Filters]
 white_list =
-black_list =
+black_list = .git, .exe, .pyc, .dll, build
 """
     with open(config_file, "w", encoding="utf-8") as f:
         f.write(default_config)
@@ -323,8 +323,11 @@ def main():
             output_file = default_output_archive
         white_list_str = input("Inserisci la white list (estensioni separate da virgola, default: vuota → tutti i file): ").strip()
         white_list = [x.strip() for x in white_list_str.split(',')] if white_list_str else []
-        black_list_str = input("Inserisci la black list (estensioni o nomi di cartelle separati da virgola, default: vuota): ").strip()
-        black_list = [x.strip() for x in black_list_str.split(',')] if black_list_str else []
+        black_list_str = input("Inserisci la black list (estensioni o nomi di cartelle separati da virgola, default: .git, .exe, .pyc, .dll, build): ").strip()
+        if black_list_str == "":
+            black_list = [".git", ".exe", ".pyc", ".dll", "build"]
+        else:
+            black_list = [x.strip() for x in black_list_str.split(',')]
         
         print("Scegli l'operazione da eseguire:")
         print("1) Comprimere il progetto")
